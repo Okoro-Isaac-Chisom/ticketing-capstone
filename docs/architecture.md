@@ -19,7 +19,7 @@ flowchart TB
 - **Repositories** save and load data; they may not make business decisions.
 - **Data store** keeps the data; it never calls back into the app.
 
-(Routes and the rules exist now. Services and repositories arrive in Build 4.)
+(Since Build 4 all layers exist: `src/http` routes, `src/services`, `src/domain` rules and `src/repositories`. Services receive the repository and the payment gateway as arguments; they never import them. That lets Build 5 swap the in-memory repository for SQLite without touching the services.)
 
 ## 2. Data model
 

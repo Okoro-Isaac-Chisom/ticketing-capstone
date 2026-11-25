@@ -5,12 +5,19 @@ import { DomainError } from '../domain/errors.js';
 import { HttpError } from './httpError.js';
 import { createRouter } from './router.js';
 import { registerRoutes } from './routes.js';
+import { createMemoryRepository } from '../repositories/memory.js';
+import { createMockPaymentGateway } from '../lib/mockPaymentGateway.js';
+import { createEventService } from '../services/eventService.js';
+import { createBookingService } from '../services/bookingService.js';
 
 const MAX_BODY_BYTES = 1_000_000; // refuse request bodies over 1 MB
 
 // How each business error code maps to an HTTP status.
 const STATUS_BY_CODE = {
   VALIDATION: 400,
+  UNAUTHENTICATED: 401,
+  PAYMENT_DECLINED: 402,
+  FORBIDDEN: 403,
   NOT_FOUND: 404,
   SOLD_OUT: 409,
   INVALID_STATE: 409,
@@ -29,7 +36,14 @@ const MIME_TYPES = {
 };
 
 // Builds the server but does NOT start listening, so tests can choose the port.
-export function createApp({ publicDir, router = defaultRouter(), logger = console } = {}) {
+// repo and gateway can be replaced (tests do this); by default we use the in-memory ones.
+export function createApp({
+  publicDir,
+  repo = createMemoryRepository(),
+  gateway = createMockPaymentGateway(),
+  router = buildRouter({ repo, gateway }),
+  logger = console,
+} = {}) {
   const root = path.resolve(publicDir);
 
   const server = http.createServer(async (req, res) => {
@@ -93,9 +107,13 @@ export function createApp({ publicDir, router = defaultRouter(), logger = consol
   return server;
 }
 
-function defaultRouter() {
+// The services get their repository and gateway as arguments (they never import them).
+function buildRouter({ repo, gateway }) {
   const router = createRouter();
-  registerRoutes(router);
+  registerRoutes(router, {
+    eventService: createEventService({ repo }),
+    bookingService: createBookingService({ repo, gateway }),
+  });
   return router;
 }
 

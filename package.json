@@ -9,6 +9,7 @@
     "demo": "node scripts/demo.js",
     "benchmark": "node scripts/benchmark-lookup.js",
     "start": "node src/server.js",
+    "api-demo": "node scripts/api-demo.js",
     "test": "node --test --test-reporter=spec"
   }
 }

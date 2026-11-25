@@ -1,10 +1,11 @@
 import { DomainError } from './errors.js';
 import { newId, newReference } from './ids.js';
 import { Queue } from './waitlistQueue.js';
-import { requireText, requireWholeNumber, parseDate } from './validation.js';
+import { requireText } from './validation.js';
+import {
+  validateNewEvent, validateNewTier, validateQuantity, seatsLeft, toSummary,
+} from './rules.js';
 import { BOOKING_STATES, assertTransition } from './bookingStateMachine.js';
-
-const MAX_TICKETS_PER_BOOKING = 10;
 
 // ---------- the store ----------
 // Everything lives in memory in Maps so lookups by key are O(1).
@@ -30,31 +31,23 @@ function getTier(event, tierId) {
 }
 
 // S02: a new event is always a DRAFT (hidden from the public list).
-export function createEvent(store, { title, city, venue, startsAt }) {
-  title = requireText(title, 'title');
-  city = requireText(city, 'city');
-  venue = requireText(venue, 'venue');
-  parseDate(startsAt, 'startsAt'); // throws VALIDATION for a non-date like 2026-02-30
-  const event = { id: newId(), title, city, venue, startsAt, status: 'DRAFT', tiers: new Map() };
+export function createEvent(store, input) {
+  const fields = validateNewEvent(input); // throws VALIDATION for bad input
+  const event = { id: newId(), ...fields, status: 'DRAFT', tiers: new Map() };
   store.events.set(event.id, event);
   return event;
 }
 
 // S03: add a ticket tier (price in whole cents, capacity >= 1).
-export function addTier(store, eventId, { name, priceCents, capacity }) {
+export function addTier(store, eventId, input) {
   const event = getEvent(store, eventId); // NOT_FOUND if the event does not exist
-  name = requireText(name, 'tier name');
-  requireWholeNumber(priceCents, 'priceCents', 0);
-  requireWholeNumber(capacity, 'capacity', 1);
-  const tier = { id: newId(), name, priceCents, capacity, sold: 0 };
+  const tier = { id: newId(), ...validateNewTier(input), sold: 0 };
   event.tiers.set(tier.id, tier);
   return tier;
 }
 
-// Seats still available in a tier.
-export function seatsLeft(tier) {
-  return tier.capacity - tier.sold;
-}
+// Seats still available in a tier (the rule lives in rules.js).
+export { seatsLeft };
 
 // S04: publish / unpublish.
 export function publishEvent(store, eventId) {
@@ -78,17 +71,7 @@ export function listEventSummaries(store, { publishedOnly = true } = {}) {
   const summaries = [];
   for (const event of store.events.values()) {
     if (publishedOnly && event.status !== 'PUBLISHED') continue;
-    const tiers = [...event.tiers.values()];
-    summaries.push({
-      id: event.id,
-      title: event.title,
-      city: event.city,
-      venue: event.venue,
-      startsAt: event.startsAt,
-      status: event.status,
-      cheapestPriceCents: tiers.length ? Math.min(...tiers.map((t) => t.priceCents)) : null,
-      seatsLeft: tiers.reduce((sum, t) => sum + seatsLeft(t), 0),
-    });
+    summaries.push(toSummary(event, [...event.tiers.values()]));
   }
   return summaries;
 }
@@ -99,10 +82,7 @@ export function bookTickets(store, { eventId, tierId, attendeeName, quantity }) 
   const event = getEvent(store, eventId);
   const tier = getTier(event, tierId);
   attendeeName = requireText(attendeeName, 'attendeeName');
-  requireWholeNumber(quantity, 'quantity', 1);
-  if (quantity > MAX_TICKETS_PER_BOOKING) {
-    throw new DomainError('VALIDATION', `quantity cannot exceed ${MAX_TICKETS_PER_BOOKING}`);
-  }
+  validateQuantity(quantity);
   if (event.status !== 'PUBLISHED') {
     throw new DomainError('INVALID_STATE', 'Tickets can only be booked for a published event');
   }

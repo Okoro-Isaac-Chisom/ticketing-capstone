@@ -76,7 +76,7 @@ test('S06: booking 2 of 3 seats makes a PENDING booking priced in whole cents', 
   const store = createStore();
   const { event, tier } = makePublishedEvent(store);
   const b = bookTickets(store, { eventId: event.id, tierId: tier.id, attendeeName: 'Ada', quantity: 2 });
-  assert.equal(b.status, 'PENDING');
+  assert.equal(b.status, 'pending');
   assert.equal(b.quantity, 2);
   assert.equal(b.totalCents, 1000000);
   assert.equal(seatsLeft(tier), 1);
@@ -133,4 +133,13 @@ test('waitlist is first-in-first-out', () => {
   assert.equal(joinWaitlist(store, { eventId: event.id, tierId: tier.id, attendeeName: 'Bayo' }), 1);
   assert.equal(joinWaitlist(store, { eventId: event.id, tierId: tier.id, attendeeName: 'Dede' }), 2);
   assert.equal(nextOnWaitlist(store, tier.id).attendeeName, 'Bayo');
+});
+
+test('a refunded booking cannot be cancelled (INVALID_TRANSITION)', () => {
+  const store = createStore();
+  const { event, tier } = makePublishedEvent(store);
+  const b = bookTickets(store, { eventId: event.id, tierId: tier.id, attendeeName: 'Ada', quantity: 1 });
+  b.status = 'refunded'; // (payment and refund arrive in later builds)
+  assert.equal(codeOf(() => cancelBooking(store, b.id)), 'INVALID_TRANSITION');
+  assert.equal(seatsLeft(tier), 2); // seats were not released again
 });

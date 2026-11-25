@@ -2,6 +2,7 @@ import { DomainError } from './errors.js';
 import { newId, newReference } from './ids.js';
 import { Queue } from './waitlistQueue.js';
 import { requireText, requireWholeNumber, parseDate } from './validation.js';
+import { BOOKING_STATES, assertTransition } from './bookingStateMachine.js';
 
 const MAX_TICKETS_PER_BOOKING = 10;
 
@@ -123,7 +124,7 @@ export function bookTickets(store, { eventId, tierId, attendeeName, quantity }) 
     attendeeName,
     quantity,
     totalCents: tier.priceCents * quantity, // integer math, no rounding issues
-    status: 'PENDING',
+    status: BOOKING_STATES.PENDING,
   };
   tier.sold += quantity;
   store.bookings.set(booking.id, booking);
@@ -134,13 +135,15 @@ export function bookTickets(store, { eventId, tierId, attendeeName, quantity }) 
 export function cancelBooking(store, bookingId) {
   const booking = store.bookings.get(bookingId);
   if (!booking) throw new DomainError('NOT_FOUND', `Booking ${bookingId} not found`);
-  if (booking.status === 'CANCELLED') {
+  if (booking.status === BOOKING_STATES.CANCELLED) {
     throw new DomainError('ALREADY_CANCELLED', 'Booking is already cancelled');
   }
+  // Refunded or checked-in bookings cannot be cancelled: the state machine refuses.
+  assertTransition(booking.status, BOOKING_STATES.CANCELLED);
   // Release the seats exactly once (the status check above guards this).
   const tier = getTier(getEvent(store, booking.eventId), booking.tierId);
   tier.sold -= booking.quantity;
-  booking.status = 'CANCELLED';
+  booking.status = BOOKING_STATES.CANCELLED;
   return booking;
 }
 

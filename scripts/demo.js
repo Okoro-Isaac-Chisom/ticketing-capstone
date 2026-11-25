@@ -1,5 +1,5 @@
 import {
-  createStore, createEvent, addTier, bookTickets, cancelBooking,
+  createStore, createEvent, addTier, publishEvent, bookTickets, cancelBooking,
   findBookingByReference, joinWaitlist, nextOnWaitlist, seatsLeft,
 } from '../src/domain/inventory.js';
 import { DomainError } from '../src/domain/errors.js';
@@ -8,10 +8,13 @@ import { DomainError } from '../src/domain/errors.js';
 const step = (text) => console.log(`\n== ${text}`);
 
 const store = createStore();
-const event = createEvent(store, { name: 'Lagos Tech Night', startsAt: '2027-03-20T18:00:00Z' });
+const event = createEvent(store, {
+  title: 'Lagos Tech Night', city: 'Lagos', venue: 'Landmark Centre', startsAt: '2027-03-20T18:00:00Z',
+});
 const tier = addTier(store, event.id, { name: 'General', priceCents: 500000, capacity: 3 });
+publishEvent(store, event.id); // only published events can be booked
 
-step(`Event "${event.name}" with 3 seats`);
+step(`Event "${event.title}" with 3 seats`);
 
 step('Ada books 2 of 3 seats');
 const adaBooking = bookTickets(store, { eventId: event.id, tierId: tier.id, attendeeName: 'Ada', quantity: 2 });

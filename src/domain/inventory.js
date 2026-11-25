@@ -1,33 +1,18 @@
 import { DomainError } from './errors.js';
 import { newId, newReference } from './ids.js';
 import { Queue } from './waitlistQueue.js';
+import { requireText, requireWholeNumber, parseDate } from './validation.js';
 
 const MAX_TICKETS_PER_BOOKING = 10;
-
-// ---------- small validation helpers ----------
-function requireText(value, field) {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new DomainError('VALIDATION', `${field} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-// Money is ALWAYS whole cents (integers), never decimals like 12.50.
-function requireWholeNumber(value, field, min) {
-  if (!Number.isInteger(value) || value < min) {
-    throw new DomainError('VALIDATION', `${field} must be a whole number >= ${min}`);
-  }
-  return value;
-}
 
 // ---------- the store ----------
 // Everything lives in memory in Maps so lookups by key are O(1).
 export function createStore() {
   return {
-    events: new Map(),            // eventId   -> event
-    bookings: new Map(),          // bookingId -> booking
+    events: new Map(),              // eventId   -> event
+    bookings: new Map(),            // bookingId -> booking
     bookingsByReference: new Map(), // reference -> booking (fast lookup)
-    waitlists: new Map(),         // tierId    -> Queue of waiting people
+    waitlists: new Map(),           // tierId    -> Queue of waiting people
   };
 }
 
@@ -43,18 +28,20 @@ function getTier(event, tierId) {
   return tier;
 }
 
-export function createEvent(store, { name, startsAt }) {
-  name = requireText(name, 'name');
-  if (typeof startsAt !== 'string' || Number.isNaN(Date.parse(startsAt))) {
-    throw new DomainError('VALIDATION', 'startsAt must be a valid date string');
-  }
-  const event = { id: newId(), name, startsAt, tiers: new Map() };
+// S02: a new event is always a DRAFT (hidden from the public list).
+export function createEvent(store, { title, city, venue, startsAt }) {
+  title = requireText(title, 'title');
+  city = requireText(city, 'city');
+  venue = requireText(venue, 'venue');
+  parseDate(startsAt, 'startsAt'); // throws VALIDATION for a non-date like 2026-02-30
+  const event = { id: newId(), title, city, venue, startsAt, status: 'DRAFT', tiers: new Map() };
   store.events.set(event.id, event);
   return event;
 }
 
+// S03: add a ticket tier (price in whole cents, capacity >= 1).
 export function addTier(store, eventId, { name, priceCents, capacity }) {
-  const event = getEvent(store, eventId);
+  const event = getEvent(store, eventId); // NOT_FOUND if the event does not exist
   name = requireText(name, 'tier name');
   requireWholeNumber(priceCents, 'priceCents', 0);
   requireWholeNumber(capacity, 'capacity', 1);
@@ -68,6 +55,44 @@ export function seatsLeft(tier) {
   return tier.capacity - tier.sold;
 }
 
+// S04: publish / unpublish.
+export function publishEvent(store, eventId) {
+  const event = getEvent(store, eventId);
+  if (event.tiers.size === 0) {
+    throw new DomainError('INVALID_STATE', 'Cannot publish an event with no ticket tiers');
+  }
+  event.status = 'PUBLISHED';
+  return event;
+}
+
+export function unpublishEvent(store, eventId) {
+  const event = getEvent(store, eventId);
+  event.status = 'DRAFT';
+  return event;
+}
+
+// Flat, read-only view of events used by search and the public list.
+// Drafts are hidden unless publishedOnly is false.
+export function listEventSummaries(store, { publishedOnly = true } = {}) {
+  const summaries = [];
+  for (const event of store.events.values()) {
+    if (publishedOnly && event.status !== 'PUBLISHED') continue;
+    const tiers = [...event.tiers.values()];
+    summaries.push({
+      id: event.id,
+      title: event.title,
+      city: event.city,
+      venue: event.venue,
+      startsAt: event.startsAt,
+      status: event.status,
+      cheapestPriceCents: tiers.length ? Math.min(...tiers.map((t) => t.priceCents)) : null,
+      seatsLeft: tiers.reduce((sum, t) => sum + seatsLeft(t), 0),
+    });
+  }
+  return summaries;
+}
+
+// S06: book tickets. The booking starts as PENDING (payment comes in Build 4).
 export function bookTickets(store, { eventId, tierId, attendeeName, quantity }) {
   // 1. Validate EVERYTHING first, before changing any state.
   const event = getEvent(store, eventId);
@@ -76,6 +101,9 @@ export function bookTickets(store, { eventId, tierId, attendeeName, quantity }) 
   requireWholeNumber(quantity, 'quantity', 1);
   if (quantity > MAX_TICKETS_PER_BOOKING) {
     throw new DomainError('VALIDATION', `quantity cannot exceed ${MAX_TICKETS_PER_BOOKING}`);
+  }
+  if (event.status !== 'PUBLISHED') {
+    throw new DomainError('INVALID_STATE', 'Tickets can only be booked for a published event');
   }
 
   // 2. Capacity rule: not enough seats -> throw, nothing has changed yet.
@@ -95,7 +123,7 @@ export function bookTickets(store, { eventId, tierId, attendeeName, quantity }) 
     attendeeName,
     quantity,
     totalCents: tier.priceCents * quantity, // integer math, no rounding issues
-    status: 'CONFIRMED',
+    status: 'PENDING',
   };
   tier.sold += quantity;
   store.bookings.set(booking.id, booking);

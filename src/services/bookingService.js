@@ -20,9 +20,9 @@ export function createBookingService({ repo, gateway }) {
   }
 
   return {
-    // S06. NOTE (known weakness, fixed in Build 5): this reads the tier, checks
-    // the seats, then saves. Two requests running at the same moment could both
-    // pass the check. In memory it is hard to trigger; with a database it is not.
+    // S06 + S08. The seats are taken by ONE atomic repository call (reserveSeats).
+    // We do NOT read the tier, check, and then save: another request could slip in
+    // between those steps and both would get the last seat.
     async book(userId, { eventId, tierId, quantity } = {}) {
       requireText(eventId, 'eventId');
       requireText(tierId, 'tierId');
@@ -36,25 +36,31 @@ export function createBookingService({ repo, gateway }) {
       const tier = await repo.getTier(tierId);
       if (!tier || tier.eventId !== eventId) throw new DomainError('NOT_FOUND', `Tier ${tierId} not found`);
 
-      if (quantity > seatsLeft(tier)) {
-        throw new DomainError('SOLD_OUT', `Only ${seatsLeft(tier)} ticket(s) left in ${tier.name}`);
-      }
-
       let reference = newReference();
       while (await repo.getBookingByReference(reference)) reference = newReference(); // avoid a clash
 
-      await repo.updateTier({ ...tier, sold: tier.sold + quantity });
-      return repo.insertBooking({
-        id: newId(),
-        reference,
-        userId,
-        eventId,
-        tierId,
-        quantity,
-        totalCents: tier.priceCents * quantity, // whole cents, integer math
-        status: BOOKING_STATES.PENDING,
-        createdAt: new Date().toISOString(),
-      });
+      // Win the seats or lose them: no in-between.
+      if (!(await repo.reserveSeats(tierId, quantity))) {
+        const latest = await repo.getTier(tierId); // only used for a helpful message
+        throw new DomainError('SOLD_OUT', `Only ${seatsLeft(latest)} ticket(s) left in ${tier.name}`);
+      }
+
+      try {
+        return await repo.insertBooking({
+          id: newId(),
+          reference,
+          userId,
+          eventId,
+          tierId,
+          quantity,
+          totalCents: tier.priceCents * quantity, // whole cents, integer math
+          status: BOOKING_STATES.PENDING,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        await repo.releaseSeats(tierId, quantity); // the booking was not saved, so give the seats back
+        throw err;
+      }
     },
 
     // S07. mockCard is "success" (default) or "declined". It is NOT a card number.
@@ -75,7 +81,10 @@ export function createBookingService({ repo, gateway }) {
       // A declined card throws and saves nothing: the booking stays pending, so the person can retry.
       if (!result.ok) throw new DomainError('PAYMENT_DECLINED', result.reason);
 
-      return repo.updateBooking({ ...booking, status: BOOKING_STATES.PAID, chargeId: result.chargeId });
+      // Only mark it paid if nobody changed it while we were charging (for example a cancel).
+      const moved = await repo.transitionBooking(reference, BOOKING_STATES.PENDING, BOOKING_STATES.PAID, { chargeId: result.chargeId });
+      if (!moved) throw new DomainError('INVALID_STATE', 'The booking changed while the payment was processed');
+      return repo.getBookingByReference(reference);
     },
 
     // Cancel an UNPAID booking and release its seats exactly once.
@@ -90,9 +99,16 @@ export function createBookingService({ repo, gateway }) {
       }
       assertTransition(booking.status, BOOKING_STATES.CANCELLED);
 
-      const tier = await repo.getTier(booking.tierId);
-      await repo.updateTier({ ...tier, sold: tier.sold - booking.quantity });
-      return repo.updateBooking({ ...booking, status: BOOKING_STATES.CANCELLED });
+      // Only ONE of two simultaneous cancels can win this move, so seats are released once.
+      const won = await repo.transitionBooking(reference, booking.status, BOOKING_STATES.CANCELLED);
+      if (!won) {
+        const now = await repo.getBookingByReference(reference);
+        throw now.status === BOOKING_STATES.CANCELLED
+          ? new DomainError('ALREADY_CANCELLED', 'Booking is already cancelled')
+          : new DomainError('INVALID_STATE', 'The booking changed; please try again');
+      }
+      await repo.releaseSeats(booking.tierId, booking.quantity);
+      return repo.getBookingByReference(reference);
     },
 
     async getBooking(userId, reference) {

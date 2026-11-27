@@ -16,7 +16,7 @@ test('missing records come back as undefined; updating a missing one throws', as
   const repo = createMemoryRepository();
   assert.equal(await repo.getEvent('nope'), undefined);
   assert.equal(await repo.getBookingByReference('NOPE'), undefined);
-  await assert.rejects(() => repo.updateTier({ id: 'nope' }));
+  await assert.rejects(() => repo.updateEvent({ id: 'nope' }));
 });
 
 test('bookings can be found by reference', async () => {

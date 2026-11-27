@@ -17,7 +17,7 @@ flowchart TB
 - **Services** run one use case (such as "book tickets") by combining rules and repositories; they may not know anything about HTTP.
 - **Domain rules** decide what is allowed (capacity, validation, the booking life cycle); they may not do any I/O, so they stay easy to test.
 - **Repositories** save and load data; they may not make business decisions.
-- **Data store** keeps the data; it never calls back into the app.
+- **Data store** keeps the data (a SQLite file since Build 5) and enforces the last-resort rules with constraints; it never calls back into the app.
 
 (Since Build 4 all layers exist: `src/http` routes, `src/services`, `src/domain` rules and `src/repositories`. Services receive the repository and the payment gateway as arguments; they never import them. That lets Build 5 swap the in-memory repository for SQLite without touching the services.)
 

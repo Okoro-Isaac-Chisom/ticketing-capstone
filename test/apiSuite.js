@@ -1,8 +1,7 @@
-import { test, before, after } from 'node:test';
+import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/http/app.js';
-import { createMemoryRepository } from '../src/repositories/memory.js';
 import { createMockPaymentGateway } from '../src/lib/mockPaymentGateway.js';
 
 const publicDir = fileURLToPath(new URL('../public', import.meta.url));
@@ -12,10 +11,13 @@ const realGateway = createMockPaymentGateway();
 let charges = 0;
 const countingGateway = { charge: async (args) => { const r = await realGateway.charge(args); if (r.ok) charges++; return r; } };
 
+// Runs the SAME API tests against any repository (memory or SQLite).
+export function defineApiTests(label, makeRepo) {
+describe(label, () => {
 let server;
 let base;
 before(async () => {
-  server = createApp({ publicDir, repo: createMemoryRepository(), gateway: countingGateway, logger: { error() {} } });
+  server = createApp({ publicDir, repo: makeRepo(), gateway: countingGateway, logger: { error() {} } });
   await new Promise((resolve) => server.listen(0, resolve)); // port 0 = any free port
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -247,3 +249,6 @@ test('an unknown API path still uses the standard error shape', async () => {
   const r = await api('GET', '/api/does-not-exist');
   assert.equal(r.status, 404);
 });
+
+});
+}

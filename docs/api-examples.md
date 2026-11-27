@@ -7,8 +7,7 @@ Start the server first:
 npm start          # http://localhost:3000
 ```
 
-The data lives in memory, so it is empty again after a restart. Ids and booking
-references are new every time: copy them from each response.
+Since Build 5 the data is stored in a SQLite file (`data/ticketing.db`), so it survives a restart. Run `npm run seed` once to add sample events. Ids and booking references are new every time: copy them from each response.
 
 Until Build 7 adds login, the caller says who they are with the `x-user-id` header.
 Calls that change data need it.

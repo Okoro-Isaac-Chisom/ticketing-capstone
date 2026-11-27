@@ -26,9 +26,23 @@ export function createMemoryRepository() {
     // ----- tiers -----
     async insertTier(tier) { tiers.set(tier.id, copy(tier)); return copy(tier); },
     async getTier(id) { return copy(tiers.get(id)); },
-    async updateTier(tier) { mustExist(tiers, tier, 'tier'); tiers.set(tier.id, copy(tier)); return copy(tier); },
     async listTiers() { return [...tiers.values()].map(copy); },
     async listTiersByEvent(eventId) { return [...tiers.values()].filter((t) => t.eventId === eventId).map(copy); },
+
+    // Take `quantity` seats if enough are left. The check and the change happen in
+    // one step with no `await` between them, so they cannot be interleaved.
+    async reserveSeats(tierId, quantity) {
+      const tier = tiers.get(tierId);
+      if (!tier || tier.sold + quantity > tier.capacity) return false;
+      tier.sold += quantity;
+      return true;
+    },
+    async releaseSeats(tierId, quantity) {
+      const tier = tiers.get(tierId);
+      if (!tier || tier.sold - quantity < 0) return false;
+      tier.sold -= quantity;
+      return true;
+    },
 
     // ----- bookings -----
     async insertBooking(booking) {
@@ -37,6 +51,14 @@ export function createMemoryRepository() {
       return copy(booking);
     },
     async getBookingByReference(reference) { return copy(bookings.get(byReference.get(reference))); },
+    // Change the status only if it is still `from` (same contract as the SQLite repository).
+    async transitionBooking(reference, from, to, { chargeId = null } = {}) {
+      const booking = bookings.get(byReference.get(reference));
+      if (!booking || booking.status !== from) return false;
+      booking.status = to;
+      if (chargeId !== null) booking.chargeId = chargeId;
+      return true;
+    },
     async updateBooking(booking) { mustExist(bookings, booking, 'booking'); bookings.set(booking.id, copy(booking)); return copy(booking); },
   };
 }
